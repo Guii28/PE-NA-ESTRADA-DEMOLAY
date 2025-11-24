@@ -70,6 +70,40 @@ header {
     background-color: #003366;
 }
 
+.btn-secondary {
+    background-color: #008080; /* Teal */
+    color: var(--color-white);
+    border: none;
+    padding: 0.6rem 1.2rem;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 0.9rem;
+    font-family: 'Montserrat', sans-serif;
+    transition: background-color 0.2s;
+    margin-right: 10px; 
+}
+.btn-secondary:hover {
+    background-color: #006666;
+}
+
+/* ESTILO PARA BOTÃO DE PERIGO (RESET) */
+.btn-danger {
+    background-color: #cc0000;
+    color: var(--color-white);
+    border: none;
+    padding: 0.8rem;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 0.9rem;
+    font-family: 'Montserrat', sans-serif;
+    transition: background-color 0.2s;
+    font-weight: bold;
+}
+
+.btn-danger:hover {
+    background-color: #990000;
+}
+
 /* LAYOUT PRINCIPAL */
 #meeting-list {
     padding: 1.5rem 1rem;
@@ -238,13 +272,24 @@ form label {
 
 form input[type="text"],
 form input[type="date"],
-form input[type="time"] {
+form input[type="time"],
+form input[type="password"] {
     width: 100%;
     padding: 0.7rem;
     margin-bottom: 1rem;
     border: 1px solid #ccc;
     border-radius: 4px;
     font-size: 1rem;
+}
+
+form textarea {
+    width: 100%;
+    padding: 0.7rem;
+    margin-bottom: 1rem;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    font-size: 1rem;
+    font-family: monospace;
 }
 
 form button[type="submit"] {
