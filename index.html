@@ -1,0 +1,379 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Agenda Semanal</title>
+    <link rel="stylesheet" href="style.css">
+    <link href="https://fonts.googleapis.com/css2?family=Cormorant:wght@400;600&family=Montserrat:wght@700&display=swap" rel="stylesheet">
+</head>
+<body>
+
+    <header>
+        <h1>🗓️ Reuniões da Semana</h1>
+        <button id="openNewMeetingModal" class="btn-primary">Criar Nova Reunião</button>
+    </header>
+
+    <main id="meeting-list">
+        </main>
+
+    <div id="newMeetingModal" class="modal">
+        <div class="modal-content">
+            <span class="close-btn">&times;</span>
+            <h2>Nova Reunião</h2>
+            <form id="newMeetingForm">
+                <label for="meetingTitle">Título:</label>
+                <input type="text" id="meetingTitle" required maxlength="100">
+
+                <label for="meetingDate">Data:</label>
+                <input type="date" id="meetingDate" required>
+
+                <label for="meetingTime">Hora:</label>
+                <input type="time" id="meetingTime" required>
+
+                <button type="submit" class="btn-primary">Salvar Reunião</button>
+            </form>
+        </div>
+    </div>
+
+    <div id="addParticipantModal" class="modal">
+        <div class="modal-content">
+            <span class="close-btn">&times;</span>
+            <h2 id="participantMeetingTitle">Adicionar Participante</h2>
+            <form id="addParticipantForm">
+                <input type="hidden" id="participantMeetingId">
+
+                <label for="participantName">Nome:</label>
+                <input type="text" id="participantName" required maxlength="50">
+
+                <label for="participantRole">Cargo (Ex: MCE):</label>
+                <input type="text" id="participantRole" required maxlength="10">
+
+                <button type="submit" class="btn-primary">Adicionar</button>
+            </form>
+        </div>
+    </div>
+
+    <script type="module">
+        // Importa as funções necessárias do Firebase SDK v9 modular via CDN
+        import { initializeApp } from 'https://www.gstatic.com/firebasejs/9.6.10/firebase-app.js';
+        import { getFirestore, collection, addDoc, getDocs, query, where, deleteDoc, doc, runTransaction, orderBy } from 'https://www.gstatic.com/firebasejs/9.6.10/firebase-firestore.js';
+
+        // O seu firebaseConfig
+        const firebaseConfig = {
+            apiKey: "AIzaSyBn_Wqa33wPRetrfm0-n_MVZGahi2dannY",
+            authDomain: "e-na-estrada-dm.firebaseapp.com",
+            projectId: "e-na-estrada-dm",
+            storageBucket: "e-na-estrada-dm.firebasestorage.app",
+            messagingSenderId: "597150480236",
+            appId: "1:597150480236:web:4eb6d334d4d0672d8ba549",
+            measurementId: "G-LX0MBXGY5W"
+        };
+
+        // Inicializa o Firebase
+        const app = initializeApp(firebaseConfig);
+        const db = getFirestore(app);
+        const REUNIOES_COLLECTION = "reunioes";
+
+        // --- Funções Auxiliares de Data ---
+
+        // Retorna o próximo dia da semana (ex: próxima sexta) como objeto Date
+        const getNextDayOfWeek = (dayIndex) => { // 0=Dom, 1=Seg... 6=Sáb
+            const today = new Date();
+            const resultDate = new Date(today);
+            const currentDay = today.getDay();
+            let daysUntil = dayIndex - currentDay;
+
+            if (daysUntil <= 0) {
+                daysUntil += 7;
+            }
+
+            resultDate.setDate(today.getDate() + daysUntil);
+            resultDate.setHours(0, 0, 0, 0); // Zera hora para comparação de data pura
+            return resultDate;
+        };
+
+        const formatDate = (dateISO, includeDayOfWeek = true) => {
+            const date = new Date(dateISO + 'T00:00:00'); // Adiciona T00:00:00 para evitar problemas de fuso horário
+            const day = date.getDate().toString().padStart(2, '0');
+            const month = (date.getMonth() + 1).toString().padStart(2, '0');
+            const dayOfWeek = ['Domingo', 'Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado'][date.getDay()];
+            return includeDayOfWeek ? `${dayOfWeek} — ${day}/${month}` : `${day}/${month}`;
+        };
+
+        // --- Rotina de Reset Semanal ---
+
+        const resetOldMeetings = async () => {
+            // Data de corte: SEXTA-FEIRA da semana atual.
+            // Tudo antes de hoje (segunda-feira) deve ser deletado se não for sexta, sábado ou domingo desta semana.
+            const today = new Date();
+            today.setHours(0, 0, 0, 0);
+
+            // Calcula o início da "semana" (Sexta)
+            const startOfWeek = getNextDayOfWeek(5); // 5 = Sexta
+
+            // Se for domingo (0), sábado (6) ou sexta (5), a startOfWeek será a data correta.
+            // Se for outro dia, startOfWeek será a próxima sexta. Queremos a data da *última* sexta, para a semana atual.
+
+            let daysSinceFriday = (today.getDay() - 5 + 7) % 7;
+            if (daysSinceFriday === 0 && today.getDay() !== 5) { // Se for segunda-feira, a startOfWeek (próxima sexta) está 5 dias à frente, não -2
+                 daysSinceFriday = 7; // Se for segunda, a sexta anterior foi há 3 dias.
+            }
+            if (today.getDay() === 0 || today.getDay() === 6) {
+                 daysSinceFriday = (today.getDay() - 5 + 7) % 7; // Dom=2, Sáb=1
+            } else if (today.getDay() < 5) {
+                 daysSinceFriday = today.getDay() + 2; // Qua(3) + 2 = 5 dias atrás
+            } else {
+                 daysSinceFriday = 0; // Se for sexta, hoje é o dia
+            }
+
+
+            const lastFriday = new Date(today);
+            lastFriday.setDate(today.getDate() - daysSinceFriday);
+            lastFriday.setHours(0, 0, 0, 0);
+
+            // Qualquer reunião *antes* da última Sexta-Feira será deletada
+            const cutoffDate = lastFriday;
+            const cutoffDateISO = cutoffDate.toISOString().split('T')[0];
+
+            console.log(`Verificando reuniões anteriores a: ${cutoffDateISO}`);
+
+            const q = query(
+                collection(db, REUNIOES_COLLECTION),
+                where("dataISO", "<", cutoffDateISO)
+            );
+
+            const snapshot = await getDocs(q);
+            const docsToDelete = [];
+
+            if (snapshot.empty) {
+                console.log("Nenhuma reunião antiga para deletar.");
+                return;
+            }
+
+            snapshot.forEach(doc => {
+                docsToDelete.push(doc.ref);
+                // console.log(`Para deletar: ${doc.id} - ${doc.data().dataISO}`);
+            });
+
+            if (docsToDelete.length > 0) {
+                console.log(`Deletando ${docsToDelete.length} reuniões antigas...`);
+                // Firestore não permite exclusão em massa, é preciso usar runTransaction ou Promise.all
+                const deletePromises = docsToDelete.map(ref => deleteDoc(ref));
+                await Promise.all(deletePromises);
+                console.log("Deleção de reuniões antigas concluída.");
+            }
+        };
+
+        // --- Renderização e Carregamento de Dados ---
+
+        // Estrutura de dias de interesse (Sexta, Sábado, Domingo)
+        const daysOfInterest = [
+            { dayIndex: 5, name: 'Sexta' }, // 5 = Sexta
+            { dayIndex: 6, name: 'Sábado' }, // 6 = Sábado
+            { dayIndex: 0, name: 'Domingo' }  // 0 = Domingo
+        ];
+        const dayMap = {};
+
+        const setupDayStructure = () => {
+            const today = new Date();
+            const meetingList = document.getElementById('meeting-list');
+            meetingList.innerHTML = ''; // Limpa antes de renderizar
+
+            daysOfInterest.forEach(dayInfo => {
+                const dayDate = getNextDayOfWeek(dayInfo.dayIndex);
+                const dayDateISO = dayDate.toISOString().split('T')[0];
+                dayMap[dayDateISO] = dayInfo; // Mapeia a data real para o nome do dia
+
+                const dayBlock = document.createElement('section');
+                dayBlock.className = 'day-block';
+                dayBlock.innerHTML = `
+                    <h2>${dayInfo.name} — ${formatDate(dayDateISO, false)}</h2>
+                    <div id="meetings-for-${dayDateISO}" class="meetings-container">
+                        <p class="no-meetings">Nenhuma reunião agendada para este dia.</p>
+                    </div>
+                `;
+                meetingList.appendChild(dayBlock);
+            });
+        };
+
+        const renderMeetings = (meetings) => {
+            // Limpa containers antigos
+            document.querySelectorAll('.meetings-container').forEach(container => {
+                container.innerHTML = '<p class="no-meetings">Nenhuma reunião agendada para este dia.</p>';
+            });
+
+            meetings.forEach(meeting => {
+                const containerId = `meetings-for-${meeting.dataISO}`;
+                const container = document.getElementById(containerId);
+
+                if (container) {
+                    // Remove a mensagem de "Nenhuma reunião" se estiver lá
+                    const noMeetingsMsg = container.querySelector('.no-meetings');
+                    if (noMeetingsMsg) noMeetingsMsg.remove();
+
+                    // Cria o bloco da reunião
+                    const meetingDiv = document.createElement('div');
+                    meetingDiv.className = 'meeting-card';
+                    meetingDiv.dataset.id = meeting.id;
+                    meetingDiv.innerHTML = `
+                        <div class="meeting-header">
+                            <span class="meeting-time-badge">${meeting.hora}</span>
+                            <h3 class="meeting-title">${meeting.titulo}</h3>
+                        </div>
+                        <ul class="participant-list" id="participants-for-${meeting.id}">
+                            ${meeting.participantes.map(p => `<li>${p.nome} <span class="participant-role">(${p.cargo})</span></li>`).join('')}
+                        </ul>
+                        <button class="add-participant-btn" data-id="${meeting.id}" data-title="${meeting.titulo}">+ Participante</button>
+                    `;
+
+                    // Adiciona o card ao container, ordenado por hora
+                    let inserted = false;
+                    const existingMeetings = Array.from(container.children);
+                    for (const existing of existingMeetings) {
+                        const existingTime = existing.querySelector('.meeting-time-badge').textContent;
+                        if (meeting.hora < existingTime) {
+                            container.insertBefore(meetingDiv, existing);
+                            inserted = true;
+                            break;
+                        }
+                    }
+                    if (!inserted) {
+                        container.appendChild(meetingDiv);
+                    }
+                }
+            });
+
+            // Re-adiciona listener para o botão de participante
+            document.querySelectorAll('.add-participant-btn').forEach(btn => {
+                btn.onclick = () => openAddParticipantModal(btn.dataset.id, btn.dataset.title);
+            });
+        };
+
+        const loadMeetings = async () => {
+            const allMeetings = [];
+            const q = query(
+                collection(db, REUNIOES_COLLECTION),
+                where("dataISO", "in", Object.keys(dayMap)), // Filtra apenas as datas de interesse
+                orderBy("dataISO"),
+                orderBy("hora")
+            );
+
+            try {
+                const snapshot = await getDocs(q);
+                for (const docSnapshot of snapshot.docs) {
+                    const meetingData = docSnapshot.data();
+                    const meetingId = docSnapshot.id;
+
+                    // Carrega participantes (subcoleção)
+                    const participantsSnapshot = await getDocs(collection(db, REUNIOES_COLLECTION, meetingId, "participantes"));
+                    const participantes = participantsSnapshot.docs.map(p => p.data());
+
+                    allMeetings.push({
+                        id: meetingId,
+                        ...meetingData,
+                        participantes: participantes || []
+                    });
+                }
+                renderMeetings(allMeetings);
+            } catch (e) {
+                console.error("Erro ao carregar reuniões: ", e);
+                alert("Erro ao carregar reuniões. Verifique o console.");
+            }
+        };
+
+        // --- Modals e Formulários ---
+
+        const newMeetingModal = document.getElementById('newMeetingModal');
+        const openNewMeetingModalBtn = document.getElementById('openNewMeetingModal');
+        const closeBtns = document.querySelectorAll('.close-btn');
+        const newMeetingForm = document.getElementById('newMeetingForm');
+
+        const addParticipantModal = document.getElementById('addParticipantModal');
+        const addParticipantForm = document.getElementById('addParticipantForm');
+
+        openNewMeetingModalBtn.onclick = () => newMeetingModal.style.display = 'block';
+        closeBtns.forEach(btn => {
+            btn.onclick = () => {
+                newMeetingModal.style.display = 'none';
+                addParticipantModal.style.display = 'none';
+            };
+        });
+        window.onclick = (event) => {
+            if (event.target == newMeetingModal) newMeetingModal.style.display = 'none';
+            if (event.target == addParticipantModal) addParticipantModal.style.display = 'none';
+        };
+
+        const openAddParticipantModal = (meetingId, meetingTitle) => {
+            document.getElementById('participantMeetingId').value = meetingId;
+            document.getElementById('participantMeetingTitle').textContent = `Adicionar Participante: ${meetingTitle}`;
+            document.getElementById('participantName').value = '';
+            document.getElementById('participantRole').value = '';
+            addParticipantModal.style.display = 'block';
+        };
+
+        // Submissão de Nova Reunião
+        newMeetingForm.onsubmit = async (e) => {
+            e.preventDefault();
+            const titulo = document.getElementById('meetingTitle').value;
+            const dataISO = document.getElementById('meetingDate').value;
+            const hora = document.getElementById('meetingTime').value;
+
+            if (!dayMap[dataISO]) {
+                 alert("A data selecionada não é uma Sexta, Sábado ou Domingo da semana atual.");
+                 return;
+            }
+
+            try {
+                await addDoc(collection(db, REUNIOES_COLLECTION), {
+                    titulo,
+                    dataISO, // Ex: "2025-11-21"
+                    hora,    // Ex: "14:30"
+                    createdAt: new Date().toISOString()
+                });
+                newMeetingModal.style.display = 'none';
+                newMeetingForm.reset();
+                alert("Reunião salva com sucesso!");
+                loadMeetings(); // Recarrega a lista
+            } catch (e) {
+                console.error("Erro ao adicionar documento: ", e);
+                alert("Erro ao salvar a reunião. Verifique o console.");
+            }
+        };
+
+        // Submissão de Novo Participante
+        addParticipantForm.onsubmit = async (e) => {
+            e.preventDefault();
+            const meetingId = document.getElementById('participantMeetingId').value;
+            const nome = document.getElementById('participantName').value;
+            const cargo = document.getElementById('participantRole').value;
+
+            try {
+                // Adiciona o participante à subcoleção 'participantes'
+                await addDoc(collection(db, REUNIOES_COLLECTION, meetingId, "participantes"), {
+                    nome,
+                    cargo,
+                    joinedAt: new Date().toISOString()
+                });
+                addParticipantModal.style.display = 'none';
+                addParticipantForm.reset();
+                alert("Participante adicionado com sucesso!");
+                loadMeetings(); // Recarrega a lista para atualizar a visualização
+            } catch (e) {
+                console.error("Erro ao adicionar participante: ", e);
+                alert("Erro ao adicionar participante. Verifique o console.");
+            }
+        };
+
+        // --- Inicialização ---
+
+        const init = async () => {
+            setupDayStructure(); // Configura os blocos HTML para Sexta, Sábado, Domingo
+            await resetOldMeetings(); // Executa a rotina de limpeza semanal
+            await loadMeetings(); // Carrega e renderiza as reuniões restantes
+        };
+
+        init();
+    </script>
+</body>
+</html>
