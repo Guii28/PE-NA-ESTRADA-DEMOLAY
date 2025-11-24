@@ -55,11 +55,10 @@
     </div>
 
     <script type="module">
-        // Importa as funções necessárias do Firebase SDK v9 modular via CDN
         import { initializeApp } from 'https://www.gstatic.com/firebasejs/9.6.10/firebase-app.js';
-        import { getFirestore, collection, addDoc, getDocs, query, where, deleteDoc, doc, runTransaction, orderBy } from 'https://www.gstatic.com/firebasejs/9.6.10/firebase-firestore.js';
+        import { getFirestore, collection, addDoc, getDocs, query, where, deleteDoc, orderBy } from 'https://www.gstatic.com/firebasejs/9.6.10/firebase-firestore.js';
 
-        // O seu firebaseConfig
+        // SEU firebaseConfig
         const firebaseConfig = {
             apiKey: "AIzaSyBn_Wqa33wPRetrfm0-n_MVZGahi2dannY",
             authDomain: "e-na-estrada-dm.firebaseapp.com",
@@ -70,120 +69,102 @@
             measurementId: "G-LX0MBXGY5W"
         };
 
-        // Inicializa o Firebase
         const app = initializeApp(firebaseConfig);
         const db = getFirestore(app);
         const REUNIOES_COLLECTION = "reunioes";
 
         // --- Funções Auxiliares de Data ---
 
-        // Retorna o próximo dia da semana (ex: próxima sexta) como objeto Date
+        // Retorna o dia da semana (ex: próxima sexta) como objeto Date.
         const getNextDayOfWeek = (dayIndex) => { // 0=Dom, 1=Seg... 6=Sáb
             const today = new Date();
             const resultDate = new Date(today);
             const currentDay = today.getDay();
             let daysUntil = dayIndex - currentDay;
 
-            if (daysUntil <= 0) {
-                daysUntil += 7;
+            if (daysUntil < 0) {
+                daysUntil += 7; 
             }
 
             resultDate.setDate(today.getDate() + daysUntil);
-            resultDate.setHours(0, 0, 0, 0); // Zera hora para comparação de data pura
+            resultDate.setHours(0, 0, 0, 0); 
             return resultDate;
         };
 
         const formatDate = (dateISO, includeDayOfWeek = true) => {
-            const date = new Date(dateISO + 'T00:00:00'); // Adiciona T00:00:00 para evitar problemas de fuso horário
+            const date = new Date(dateISO + 'T00:00:00'); 
             const day = date.getDate().toString().padStart(2, '0');
             const month = (date.getMonth() + 1).toString().padStart(2, '0');
             const dayOfWeek = ['Domingo', 'Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado'][date.getDay()];
             return includeDayOfWeek ? `${dayOfWeek} — ${day}/${month}` : `${day}/${month}`;
         };
 
-        // --- Rotina de Reset Semanal ---
+        // --- Rotina de Reset Semanal (Corrigida) ---
 
         const resetOldMeetings = async () => {
-            // Data de corte: SEXTA-FEIRA da semana atual.
-            // Tudo antes de hoje (segunda-feira) deve ser deletado se não for sexta, sábado ou domingo desta semana.
             const today = new Date();
             today.setHours(0, 0, 0, 0);
 
-            // Calcula o início da "semana" (Sexta)
-            const startOfWeek = getNextDayOfWeek(5); // 5 = Sexta
+            // 5 = Sexta-feira (Início da semana de interesse)
+            const targetDayIndex = 5; 
 
-            // Se for domingo (0), sábado (6) ou sexta (5), a startOfWeek será a data correta.
-            // Se for outro dia, startOfWeek será a próxima sexta. Queremos a data da *última* sexta, para a semana atual.
+            // Calcula quantos dias se passaram desde a última Sexta-feira.
+            let daysSinceTarget = (today.getDay() - targetDayIndex + 7) % 7;
 
-            let daysSinceFriday = (today.getDay() - 5 + 7) % 7;
-            if (daysSinceFriday === 0 && today.getDay() !== 5) { // Se for segunda-feira, a startOfWeek (próxima sexta) está 5 dias à frente, não -2
-                 daysSinceFriday = 7; // Se for segunda, a sexta anterior foi há 3 dias.
-            }
-            if (today.getDay() === 0 || today.getDay() === 6) {
-                 daysSinceFriday = (today.getDay() - 5 + 7) % 7; // Dom=2, Sáb=1
-            } else if (today.getDay() < 5) {
-                 daysSinceFriday = today.getDay() + 2; // Qua(3) + 2 = 5 dias atrás
-            } else {
-                 daysSinceFriday = 0; // Se for sexta, hoje é o dia
-            }
+            const cutoffDate = new Date(today);
+            cutoffDate.setDate(today.getDate() - daysSinceTarget);
+            cutoffDate.setHours(0, 0, 0, 0); 
 
-
-            const lastFriday = new Date(today);
-            lastFriday.setDate(today.getDate() - daysSinceFriday);
-            lastFriday.setHours(0, 0, 0, 0);
-
-            // Qualquer reunião *antes* da última Sexta-Feira será deletada
-            const cutoffDate = lastFriday;
             const cutoffDateISO = cutoffDate.toISOString().split('T')[0];
 
-            console.log(`Verificando reuniões anteriores a: ${cutoffDateISO}`);
+            console.log(`[RESET] Verificando reuniões anteriores a (Corte na última Sexta): ${cutoffDateISO}`);
 
             const q = query(
                 collection(db, REUNIOES_COLLECTION),
                 where("dataISO", "<", cutoffDateISO)
             );
 
-            const snapshot = await getDocs(q);
-            const docsToDelete = [];
+            try {
+                const snapshot = await getDocs(q);
+                const docsToDelete = [];
 
-            if (snapshot.empty) {
-                console.log("Nenhuma reunião antiga para deletar.");
-                return;
-            }
+                if (snapshot.empty) {
+                    console.log("[RESET] Nenhuma reunião antiga para deletar.");
+                    return;
+                }
 
-            snapshot.forEach(doc => {
-                docsToDelete.push(doc.ref);
-                // console.log(`Para deletar: ${doc.id} - ${doc.data().dataISO}`);
-            });
+                snapshot.forEach(doc => {
+                    docsToDelete.push(doc.ref);
+                });
 
-            if (docsToDelete.length > 0) {
-                console.log(`Deletando ${docsToDelete.length} reuniões antigas...`);
-                // Firestore não permite exclusão em massa, é preciso usar runTransaction ou Promise.all
-                const deletePromises = docsToDelete.map(ref => deleteDoc(ref));
-                await Promise.all(deletePromises);
-                console.log("Deleção de reuniões antigas concluída.");
+                if (docsToDelete.length > 0) {
+                    console.log(`[RESET] Deletando ${docsToDelete.length} reuniões antigas...`);
+                    const deletePromises = docsToDelete.map(ref => deleteDoc(ref));
+                    await Promise.all(deletePromises);
+                    console.log("[RESET] Deleção de reuniões antigas concluída.");
+                }
+            } catch (e) {
+                console.error("[RESET] Erro durante a rotina de reset: ", e);
             }
         };
 
         // --- Renderização e Carregamento de Dados ---
 
-        // Estrutura de dias de interesse (Sexta, Sábado, Domingo)
         const daysOfInterest = [
-            { dayIndex: 5, name: 'Sexta' }, // 5 = Sexta
-            { dayIndex: 6, name: 'Sábado' }, // 6 = Sábado
-            { dayIndex: 0, name: 'Domingo' }  // 0 = Domingo
+            { dayIndex: 5, name: 'Sexta' },
+            { dayIndex: 6, name: 'Sábado' },
+            { dayIndex: 0, name: 'Domingo' }
         ];
         const dayMap = {};
 
         const setupDayStructure = () => {
-            const today = new Date();
             const meetingList = document.getElementById('meeting-list');
-            meetingList.innerHTML = ''; // Limpa antes de renderizar
+            meetingList.innerHTML = ''; 
 
             daysOfInterest.forEach(dayInfo => {
                 const dayDate = getNextDayOfWeek(dayInfo.dayIndex);
                 const dayDateISO = dayDate.toISOString().split('T')[0];
-                dayMap[dayDateISO] = dayInfo; // Mapeia a data real para o nome do dia
+                dayMap[dayDateISO] = dayInfo; 
 
                 const dayBlock = document.createElement('section');
                 dayBlock.className = 'day-block';
@@ -198,7 +179,6 @@
         };
 
         const renderMeetings = (meetings) => {
-            // Limpa containers antigos
             document.querySelectorAll('.meetings-container').forEach(container => {
                 container.innerHTML = '<p class="no-meetings">Nenhuma reunião agendada para este dia.</p>';
             });
@@ -208,11 +188,9 @@
                 const container = document.getElementById(containerId);
 
                 if (container) {
-                    // Remove a mensagem de "Nenhuma reunião" se estiver lá
                     const noMeetingsMsg = container.querySelector('.no-meetings');
                     if (noMeetingsMsg) noMeetingsMsg.remove();
 
-                    // Cria o bloco da reunião
                     const meetingDiv = document.createElement('div');
                     meetingDiv.className = 'meeting-card';
                     meetingDiv.dataset.id = meeting.id;
@@ -227,9 +205,9 @@
                         <button class="add-participant-btn" data-id="${meeting.id}" data-title="${meeting.titulo}">+ Participante</button>
                     `;
 
-                    // Adiciona o card ao container, ordenado por hora
+                    // Ordena por hora
                     let inserted = false;
-                    const existingMeetings = Array.from(container.children);
+                    const existingMeetings = Array.from(container.children).filter(el => el.classList.contains('meeting-card'));
                     for (const existing of existingMeetings) {
                         const existingTime = existing.querySelector('.meeting-time-badge').textContent;
                         if (meeting.hora < existingTime) {
@@ -252,9 +230,11 @@
 
         const loadMeetings = async () => {
             const allMeetings = [];
+            
+            // Requer um índice composto no Firestore (dataISO, hora)
             const q = query(
                 collection(db, REUNIOES_COLLECTION),
-                where("dataISO", "in", Object.keys(dayMap)), // Filtra apenas as datas de interesse
+                where("dataISO", "in", Object.keys(dayMap)), // Filtra só os dias exibidos
                 orderBy("dataISO"),
                 orderBy("hora")
             );
@@ -265,7 +245,6 @@
                     const meetingData = docSnapshot.data();
                     const meetingId = docSnapshot.id;
 
-                    // Carrega participantes (subcoleção)
                     const participantsSnapshot = await getDocs(collection(db, REUNIOES_COLLECTION, meetingId, "participantes"));
                     const participantes = participantsSnapshot.docs.map(p => p.data());
 
@@ -278,17 +257,16 @@
                 renderMeetings(allMeetings);
             } catch (e) {
                 console.error("Erro ao carregar reuniões: ", e);
-                alert("Erro ao carregar reuniões. Verifique o console.");
+                // O FirebaseError sobre index deve ser resolvido criando o índice manualmente.
+                alert("Erro ao carregar reuniões. Verifique o console. Se for erro de 'index', crie o índice no Firebase.");
             }
         };
 
         // --- Modals e Formulários ---
-
         const newMeetingModal = document.getElementById('newMeetingModal');
         const openNewMeetingModalBtn = document.getElementById('openNewMeetingModal');
         const closeBtns = document.querySelectorAll('.close-btn');
         const newMeetingForm = document.getElementById('newMeetingForm');
-
         const addParticipantModal = document.getElementById('addParticipantModal');
         const addParticipantForm = document.getElementById('addParticipantForm');
 
@@ -312,32 +290,34 @@
             addParticipantModal.style.display = 'block';
         };
 
-        // Submissão de Nova Reunião
+        // Submissão de Nova Reunião (FINAL)
         newMeetingForm.onsubmit = async (e) => {
             e.preventDefault();
             const titulo = document.getElementById('meetingTitle').value;
             const dataISO = document.getElementById('meetingDate').value;
             const hora = document.getElementById('meetingTime').value;
 
-            if (!dayMap[dataISO]) {
-                 alert("A data selecionada não é uma Sexta, Sábado ou Domingo da semana atual.");
+            // Validação simples: não permite datas passadas
+            if (dataISO < new Date().toISOString().split('T')[0]) {
+                 alert("Por favor, selecione uma data no presente ou futuro.");
                  return;
             }
 
             try {
-                await addDoc(collection(db, REUNIOES_COLLECTION), {
+                const docRef = await addDoc(collection(db, REUNIOES_COLLECTION), {
                     titulo,
-                    dataISO, // Ex: "2025-11-21"
-                    hora,    // Ex: "14:30"
+                    dataISO, 
+                    hora,   
                     createdAt: new Date().toISOString()
                 });
+                console.log("Documento escrito com ID: ", docRef.id);
                 newMeetingModal.style.display = 'none';
                 newMeetingForm.reset();
-                alert("Reunião salva com sucesso!");
-                loadMeetings(); // Recarrega a lista
+                alert(`Reunião "${titulo}" salva com sucesso!`);
+                loadMeetings(); 
             } catch (e) {
                 console.error("Erro ao adicionar documento: ", e);
-                alert("Erro ao salvar a reunião. Verifique o console.");
+                alert(`Erro ao salvar a reunião. Verifique o console (F12) para detalhes. Erro: ${e.message}`);
             }
         };
 
@@ -349,7 +329,6 @@
             const cargo = document.getElementById('participantRole').value;
 
             try {
-                // Adiciona o participante à subcoleção 'participantes'
                 await addDoc(collection(db, REUNIOES_COLLECTION, meetingId, "participantes"), {
                     nome,
                     cargo,
@@ -357,8 +336,8 @@
                 });
                 addParticipantModal.style.display = 'none';
                 addParticipantForm.reset();
-                alert("Participante adicionado com sucesso!");
-                loadMeetings(); // Recarrega a lista para atualizar a visualização
+                alert(`Participante ${nome} adicionado com sucesso!`);
+                loadMeetings(); 
             } catch (e) {
                 console.error("Erro ao adicionar participante: ", e);
                 alert("Erro ao adicionar participante. Verifique o console.");
@@ -368,9 +347,9 @@
         // --- Inicialização ---
 
         const init = async () => {
-            setupDayStructure(); // Configura os blocos HTML para Sexta, Sábado, Domingo
-            await resetOldMeetings(); // Executa a rotina de limpeza semanal
-            await loadMeetings(); // Carrega e renderiza as reuniões restantes
+            setupDayStructure(); 
+            await resetOldMeetings(); 
+            await loadMeetings(); 
         };
 
         init();
