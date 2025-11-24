@@ -11,7 +11,10 @@
 
     <header>
         <h1>🗓️ Reuniões da Semana</h1>
-        <button id="openNewMeetingModal" class="btn-primary">Criar Nova Reunião</button>
+        <div>
+            <button id="openBulkImportModal" class="btn-secondary">Importar Lote / Manutenção</button>
+            <button id="openNewMeetingModal" class="btn-primary">Criar Nova Reunião</button>
+        </div>
     </header>
 
     <main id="meeting-list">
@@ -30,8 +33,40 @@
 
                 <label for="meetingTime">Hora:</label>
                 <input type="time" id="meetingTime" required>
+                
+                <label for="meetingPassword">Senha para Salvar (dm123):</label>
+                <input type="password" id="meetingPassword" required>
 
                 <button type="submit" class="btn-primary">Salvar Reunião</button>
+            </form>
+        </div>
+    </div>
+
+    <div id="bulkImportModal" class="modal">
+        <div class="modal-content">
+            <span class="close-btn">&times;</span>
+            <h2>Importação em Lote de Reuniões</h2>
+            <p>Formato esperado para cada linha: <code>YYYY-MM-DD Título da Reunião HH:MM</code>.</p>
+            <form id="bulkImportForm">
+                <label for="importPassword">Senha de Administrador:</label>
+                <input type="password" id="importPassword" required>
+
+                <label for="importData">Lista de Reuniões (uma por linha):</label>
+                <textarea id="importData" rows="10" required placeholder="2025-11-28 Título da Reunião 1 19:00
+2025-11-29 Título da Reunião 2 15:30
+..."></textarea>
+
+                <button type="submit" class="btn-primary">Importar e Salvar Lote</button>
+            </form>
+
+            <hr style="margin: 20px 0;">
+            
+            <h3>⚠️ Área de Manutenção (Reset Total)</h3>
+            <p style="color: #cc0000; font-weight: bold;">Cuidado: Isso apagará TODAS as reuniões salvas no Firestore.</p>
+            <form id="resetForm">
+                <label for="resetPassword">Confirme a Senha para Reset Total (dm123):</label>
+                <input type="password" id="resetPassword" required>
+                <button type="submit" class="btn-danger" style="width: 100%; margin-top: 10px;">APAGAR TODAS AS REUNIÕES</button>
             </form>
         </div>
     </div>
@@ -63,11 +98,13 @@
             apiKey: "AIzaSyBn_Wqa33wPRetrfm0-n_MVZGahi2dannY",
             authDomain: "e-na-estrada-dm.firebaseapp.com",
             projectId: "e-na-estrada-dm",
-            storageBucket: "e-na-estrada-dm.firebasestorage.app",
+            storageBucket: "e-na-estrada-dm.firebaseapp.com",
             messagingSenderId: "597150480236",
             appId: "1:597150480236:web:4eb6d334d4d0672d8ba549",
             measurementId: "G-LX0MBXGY5W"
         };
+        
+        const CORRECT_PASSWORD = "dm123"; // Senha de Administrador
 
         const app = initializeApp(firebaseConfig);
         const db = getFirestore(app);
@@ -75,7 +112,6 @@
 
         // --- Funções Auxiliares de Data ---
 
-        // Retorna o dia da semana (ex: próxima sexta) como objeto Date.
         const getNextDayOfWeek = (dayIndex) => { // 0=Dom, 1=Seg... 6=Sáb
             const today = new Date();
             const resultDate = new Date(today);
@@ -99,7 +135,7 @@
             return includeDayOfWeek ? `${dayOfWeek} — ${day}/${month}` : `${day}/${month}`;
         };
 
-        // --- Rotina de Reset Semanal (Corrigida) ---
+        // --- Rotinas de Manutenção ---
 
         const resetOldMeetings = async () => {
             const today = new Date();
@@ -108,7 +144,6 @@
             // 5 = Sexta-feira (Início da semana de interesse)
             const targetDayIndex = 5; 
 
-            // Calcula quantos dias se passaram desde a última Sexta-feira.
             let daysSinceTarget = (today.getDay() - targetDayIndex + 7) % 7;
 
             const cutoffDate = new Date(today);
@@ -117,7 +152,7 @@
 
             const cutoffDateISO = cutoffDate.toISOString().split('T')[0];
 
-            console.log(`[RESET] Verificando reuniões anteriores a (Corte na última Sexta): ${cutoffDateISO}`);
+            console.log(`[RESET SEMANAL] Verificando reuniões anteriores a (Corte na última Sexta): ${cutoffDateISO}`);
 
             const q = query(
                 collection(db, REUNIOES_COLLECTION),
@@ -129,7 +164,7 @@
                 const docsToDelete = [];
 
                 if (snapshot.empty) {
-                    console.log("[RESET] Nenhuma reunião antiga para deletar.");
+                    console.log("[RESET SEMANAL] Nenhuma reunião antiga para deletar.");
                     return;
                 }
 
@@ -138,13 +173,49 @@
                 });
 
                 if (docsToDelete.length > 0) {
-                    console.log(`[RESET] Deletando ${docsToDelete.length} reuniões antigas...`);
+                    console.log(`[RESET SEMANAL] Deletando ${docsToDelete.length} reuniões antigas...`);
                     const deletePromises = docsToDelete.map(ref => deleteDoc(ref));
                     await Promise.all(deletePromises);
-                    console.log("[RESET] Deleção de reuniões antigas concluída.");
+                    console.log("[RESET SEMANAL] Deleção de reuniões antigas concluída.");
                 }
             } catch (e) {
-                console.error("[RESET] Erro durante a rotina de reset: ", e);
+                console.error("[RESET SEMANAL] Erro durante a rotina de reset: ", e);
+            }
+        };
+        
+        // --- NOVO: Rotina de Reset Total ---
+        const resetAllMeetings = async () => {
+            if (!confirm("TEM CERTEZA? Esta ação apagará TODAS as reuniões (e seus participantes) do banco de dados!")) {
+                return;
+            }
+
+            const q = query(collection(db, REUNIOES_COLLECTION));
+            let totalDeleted = 0;
+
+            try {
+                const snapshot = await getDocs(q);
+                const deletePromises = [];
+                
+                if (snapshot.empty) {
+                    alert("Nenhuma reunião encontrada para apagar.");
+                    return;
+                }
+                
+                snapshot.forEach(doc => {
+                    // Adiciona promessa para deletar o documento principal (reunião)
+                    deletePromises.push(deleteDoc(doc.ref));
+                    totalDeleted++;
+                });
+
+                await Promise.all(deletePromises);
+                
+                alert(`Sucesso! ${totalDeleted} reuniões apagadas.`);
+                document.getElementById('resetPassword').value = '';
+                bulkImportModal.style.display = 'none';
+                loadMeetings(); // Recarrega a lista
+            } catch (e) {
+                console.error("[RESET TOTAL] Erro ao apagar reuniões: ", e);
+                alert(`Erro ao apagar. Verifique as regras do Firestore (allow delete: if true). Erro: ${e.message}`);
             }
         };
 
@@ -222,7 +293,6 @@
                 }
             });
 
-            // Re-adiciona listener para o botão de participante
             document.querySelectorAll('.add-participant-btn').forEach(btn => {
                 btn.onclick = () => openAddParticipantModal(btn.dataset.id, btn.dataset.title);
             });
@@ -231,10 +301,9 @@
         const loadMeetings = async () => {
             const allMeetings = [];
             
-            // Requer um índice composto no Firestore (dataISO, hora)
             const q = query(
                 collection(db, REUNIOES_COLLECTION),
-                where("dataISO", "in", Object.keys(dayMap)), // Filtra só os dias exibidos
+                where("dataISO", "in", Object.keys(dayMap)),
                 orderBy("dataISO"),
                 orderBy("hora")
             );
@@ -257,7 +326,6 @@
                 renderMeetings(allMeetings);
             } catch (e) {
                 console.error("Erro ao carregar reuniões: ", e);
-                // O FirebaseError sobre index deve ser resolvido criando o índice manualmente.
                 alert("Erro ao carregar reuniões. Verifique o console. Se for erro de 'index', crie o índice no Firebase.");
             }
         };
@@ -265,21 +333,29 @@
         // --- Modals e Formulários ---
         const newMeetingModal = document.getElementById('newMeetingModal');
         const openNewMeetingModalBtn = document.getElementById('openNewMeetingModal');
+        const bulkImportModal = document.getElementById('bulkImportModal');
+        const openBulkImportModalBtn = document.getElementById('openBulkImportModal');
         const closeBtns = document.querySelectorAll('.close-btn');
         const newMeetingForm = document.getElementById('newMeetingForm');
         const addParticipantModal = document.getElementById('addParticipantModal');
         const addParticipantForm = document.getElementById('addParticipantForm');
+        const bulkImportForm = document.getElementById('bulkImportForm');
+        const resetForm = document.getElementById('resetForm'); // Novo Formulário de Reset
 
         openNewMeetingModalBtn.onclick = () => newMeetingModal.style.display = 'block';
+        openBulkImportModalBtn.onclick = () => bulkImportModal.style.display = 'block';
+
         closeBtns.forEach(btn => {
             btn.onclick = () => {
                 newMeetingModal.style.display = 'none';
                 addParticipantModal.style.display = 'none';
+                bulkImportModal.style.display = 'none';
             };
         });
         window.onclick = (event) => {
             if (event.target == newMeetingModal) newMeetingModal.style.display = 'none';
             if (event.target == addParticipantModal) addParticipantModal.style.display = 'none';
+            if (event.target == bulkImportModal) bulkImportModal.style.display = 'none';
         };
 
         const openAddParticipantModal = (meetingId, meetingTitle) => {
@@ -290,14 +366,22 @@
             addParticipantModal.style.display = 'block';
         };
 
-        // Submissão de Nova Reunião (FINAL)
+        // Submissão de Nova Reunião (COM SENHA)
         newMeetingForm.onsubmit = async (e) => {
             e.preventDefault();
             const titulo = document.getElementById('meetingTitle').value;
             const dataISO = document.getElementById('meetingDate').value;
             const hora = document.getElementById('meetingTime').value;
+            const password = document.getElementById('meetingPassword').value;
 
-            // Validação simples: não permite datas passadas
+            // 1. VERIFICAÇÃO DE SENHA
+            if (password !== CORRECT_PASSWORD) {
+                alert("Senha incorreta. Você não tem permissão para adicionar reuniões.");
+                document.getElementById('meetingPassword').value = ''; 
+                return;
+            }
+            
+            // 2. Validação simples: não permite datas passadas
             if (dataISO < new Date().toISOString().split('T')[0]) {
                  alert("Por favor, selecione uma data no presente ou futuro.");
                  return;
@@ -310,18 +394,93 @@
                     hora,   
                     createdAt: new Date().toISOString()
                 });
-                console.log("Documento escrito com ID: ", docRef.id);
                 newMeetingModal.style.display = 'none';
                 newMeetingForm.reset();
                 alert(`Reunião "${titulo}" salva com sucesso!`);
                 loadMeetings(); 
             } catch (e) {
                 console.error("Erro ao adicionar documento: ", e);
-                alert(`Erro ao salvar a reunião. Verifique o console (F12) para detalhes. Erro: ${e.message}`);
+                alert(`Erro ao salvar a reunião. Erro: ${e.message}`);
             }
         };
 
-        // Submissão de Novo Participante
+        // Submissão de Importação em Lote
+        bulkImportForm.onsubmit = async (e) => {
+            e.preventDefault();
+            const importPassword = document.getElementById('importPassword').value;
+            const importData = document.getElementById('importData').value;
+            
+            // 1. VERIFICAÇÃO DE SENHA
+            if (importPassword !== CORRECT_PASSWORD) {
+                alert("Senha incorreta. Você não tem permissão para importar reuniões.");
+                document.getElementById('importPassword').value = '';
+                return;
+            }
+
+            const lines = importData.trim().split('\n').filter(line => line.trim() !== '');
+            let successCount = 0;
+            let errorCount = 0;
+            const promises = [];
+            
+            // 2. Processa cada linha
+            for (const line of lines) {
+                // Regex: YYYY-MM-DD (Grupo 1) + Título (Grupo 2) + HH:MM (Grupo 3)
+                const match = line.match(/^(\d{4}-\d{2}-\d{2})\s(.+)\s(\d{2}:\d{2})$/);
+                
+                if (match) {
+                    const dataISO = match[1];
+                    const titulo = match[2].trim();
+                    const hora = match[3];
+
+                    // *** IMPORTANTE: Não há mais checagem de data passada aqui ***
+                    
+                    // Adiciona promessa de salvamento
+                    promises.push(addDoc(collection(db, REUNIOES_COLLECTION), {
+                        titulo,
+                        dataISO, 
+                        hora,   
+                        createdAt: new Date().toISOString()
+                    }).then(() => {
+                        successCount++;
+                    }).catch(e => {
+                        console.error(`[LOTE] Erro ao salvar linha "${line}":`, e);
+                        errorCount++;
+                    }));
+                } else {
+                    console.warn(`[LOTE] Linha com formato inválido: ${line}`);
+                    errorCount++;
+                }
+            }
+
+            await Promise.all(promises);
+            
+            bulkImportModal.style.display = 'none';
+            bulkImportForm.reset();
+            
+            if (successCount > 0 || errorCount > 0) {
+                 alert(`Importação concluída: ${successCount} reunião(ões) salvas com sucesso. ${errorCount} linha(s) ignorada(s) ou com erro.`);
+                loadMeetings();
+            } else {
+                 alert(`Nenhuma reunião importada. Verifique se o formato e a senha estão corretos.`);
+            }
+        };
+        
+        // Submissão de Reset Total (NOVO LISTENER)
+        resetForm.onsubmit = async (e) => {
+            e.preventDefault();
+            const resetPassword = document.getElementById('resetPassword').value;
+            
+            if (resetPassword !== CORRECT_PASSWORD) {
+                alert("Senha incorreta. A operação de reset foi abortada.");
+                document.getElementById('resetPassword').value = '';
+                return;
+            }
+
+            await resetAllMeetings();
+        };
+
+
+        // Submissão de Novo Participante (Inalterado)
         addParticipantForm.onsubmit = async (e) => {
             e.preventDefault();
             const meetingId = document.getElementById('participantMeetingId').value;
@@ -340,7 +499,7 @@
                 loadMeetings(); 
             } catch (e) {
                 console.error("Erro ao adicionar participante: ", e);
-                alert("Erro ao adicionar participante. Verifique o console.");
+                alert("Erro ao adicionar participante.");
             }
         };
 
@@ -348,7 +507,7 @@
 
         const init = async () => {
             setupDayStructure(); 
-            await resetOldMeetings(); 
+            await resetOldMeetings(); // Executa o reset semanal
             await loadMeetings(); 
         };
 
